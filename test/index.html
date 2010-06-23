@@ -9,24 +9,31 @@
             var isWebSocketClient = client.type == 'websocket';
             var isLongPollingCLient = client.type == 'longpolling';
             
-            function runSendTest(options) {
-                asyncTest(options.testName, function() {
+            function sendTest(options) {
+                test(options.testName, function() {
+                    var expectedCount = options.messages.length;
+                    var receiveCount = 0;
+                    
+                    stop(options.timeout || 1000);
+                    
                     client.onmessage = function(message) {
                         options.onmessage(message);
-                        start();
+                        if(++receiveCount == expectedCount) start();
                     };
                     
                     client.onerror = function(error) {
                         options.onerror(error);
-                        start();
+                        if(++receiveCount == expectedCount || options.startOnError) start();
                     }
                     
-                    client.send(options.message);
+                    for(var i=0; i<expectedCount; i++) {
+                        client.send(options.messages[i]);
+                    }
                 });
             }
         
             window.onload = function() {
-                module("Basic stuff");
+                module("Basics");
                 
                 test("Use of correct engine", function() {
                     if(window.WebSocket) {
@@ -38,9 +45,9 @@
                 
                 module("Communication");
                 
-                runSendTest({
+                sendTest({
                     testName: 'Message bounce',
-                    message: MESSAGE_BOUNCE_JSON,
+                    messages: [MESSAGE_BOUNCE_JSON],
                     
                     onmessage: function(message) {
                         same(MESSAGE_BOUNCE_JSON, message, "Messages match");
@@ -50,15 +57,34 @@
                     }
                 });
                 
-                runSendTest({
+                sendTest({
                     testName: 'Bad message',
-                    message: undefined,
+                    messages: [undefined],
                     
-                    onmessage: function(receivedMessage) {
+                    onmessage: function(message) {
                         ok(false, 'An error should have been thrown');
                     },
                     onerror: function(error) {
                         ok(true, 'Received error: ' + error);
+                    }
+                });
+                
+                var queueingMessages = [];
+                for(var i=0; i<100; i++) {
+                    queueingMessages.push(MESSAGE_BOUNCE_JSON);
+                }
+                
+                sendTest({
+                    testName: 'Message queueing',
+                    messages: queueingMessages,
+                    timeout: 10000,
+                    startOnError: true,
+                    
+                    onmessage: function(message) {
+                        same(MESSAGE_BOUNCE_JSON, message, "Messages match");
+                    },
+                    onerror: function(error) {
+                        ok(false, 'Received error: ' + error);
                     }
                 });
             }
