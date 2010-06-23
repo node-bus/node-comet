@@ -1,0 +1,61 @@
+<html>
+    <head>
+        <link rel="stylesheet" href="lib/qunit/qunit.css" media="all" />
+        <script type="text/javascript" src="lib/qunit/qunit.js"></script>
+        <script type="text/javascript" src="../src/comet.client.js"></script>
+        <script type="text/javascript">
+            var MESSAGE_BOUNCE_JSON = {content: 'Hello world!'};
+            var client = comet('http://localhost:8080/nodecomet');
+            
+            function runSendTest(options) {
+                asyncTest(options.testName, function() {
+                    client.onmessage = function(message) {
+                        options.onmessage(message);
+                        start();
+                    };
+                    
+                    client.onerror = function(error) {
+                        options.onerror(error);
+                        start();
+                    }
+                    
+                    client.send(options.message);
+                });
+            }
+        
+            window.onload = function() {
+                module("Basic communication");
+                
+                runSendTest({
+                    testName: 'Message bounce',
+                    message: MESSAGE_BOUNCE_JSON,
+                    
+                    onmessage: function(message) {
+                        same(MESSAGE_BOUNCE_JSON, message, "Messages match");
+                    },
+                    onerror: function(error) {
+                        ok(false, 'Received error: ' + error);
+                    }
+                });
+                
+                runSendTest({
+                    testName: 'Bad message',
+                    message: undefined,
+                    
+                    onmessage: function(receivedMessage) {
+                        ok(false, 'An error should have been thrown');
+                    },
+                    onerror: function(error) {
+                        ok(true, 'Received error: ' + error);
+                    }
+                });
+            }
+        </script>
+    </head>
+    <body>
+        <h1 id="qunit-header">node-comet unit tests</h1>
+        <h2 id="qunit-banner"></h2>
+        <h2 id="qunit-userAgent"></h2>
+        <ol id="qunit-tests"></ol>
+    </body>
+</html>
