@@ -20,6 +20,7 @@
     }
     
     WebSocketClient.prototype = {
+        type: 'websocket',
         onMessage: null,
         onError: null,
         errors: 0,
@@ -77,6 +78,7 @@
     }
     
     LongPollingClient.prototype = {
+        type: 'longpolling',
         clientId: null,
         errors: 0,
         

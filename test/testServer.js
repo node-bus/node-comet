@@ -16,6 +16,7 @@ httpServer.addListener('request', function (request, response) {
 });
 
 cometServer.addListener('receive', function(endpoint, clientId, json) {
+    sys.puts("Sending to " + clientId + ": " + JSON.stringify(json));
     cometServer.send(clientId, json);
 });
 

@@ -6,6 +6,8 @@
         <script type="text/javascript">
             var MESSAGE_BOUNCE_JSON = {content: 'Hello world!'};
             var client = comet('http://localhost:8080/nodecomet');
+            var isWebSocketClient = client.type == 'websocket';
+            var isLongPollingCLient = client.type == 'longpolling';
             
             function runSendTest(options) {
                 asyncTest(options.testName, function() {
@@ -24,7 +26,17 @@
             }
         
             window.onload = function() {
-                module("Basic communication");
+                module("Basic stuff");
+                
+                test("Use of correct engine", function() {
+                    if(window.WebSocket) {
+                        ok(isWebSocketClient, "Client should be an instance of WebSocketClient");
+                    } else {
+                        ok(isLongPollingCLient, "Client should be an instance of LongPollingClient");
+                    }
+                });
+                
+                module("Communication");
                 
                 runSendTest({
                     testName: 'Message bounce',
