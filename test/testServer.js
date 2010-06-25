@@ -15,9 +15,17 @@ httpServer.addListener('request', function (request, response) {
     }
 });
 
+cometServer.addListener('connect', function(endpoint, clientId) {
+    sys.puts("Client " + clientId + " connected");
+});
+
 cometServer.addListener('receive', function(endpoint, clientId, json) {
     sys.puts("Sending to " + clientId + ": " + JSON.stringify(json));
     cometServer.send(clientId, json);
+});
+
+cometServer.addListener('receiveJunk', function(endpoint, clientId, junk) {
+    sys.puts("Received junk from " + clientId + ": " + junk);
 });
 
 httpServer.listen(8080);

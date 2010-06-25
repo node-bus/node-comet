@@ -32,6 +32,18 @@ function CometEndpoint(server, pattern) {
         delete this.clients[id];
         delete clientEndpoints[id];
     };
+    
+    this._publishReceive = function(clientId, content) {
+        // parse the json and publish the event.
+        try {
+            var json = JSON.parse(content);
+        } catch(e) {
+            this.emit('receiveJunk', clientId, content);
+            this._sendJunkErrorMessage(clientId);
+        }
+        
+        if(json) this.emit('receive', clientId, json);
+    };
 }
 
 sys.inherits(CometEndpoint, events.EventEmitter);
@@ -74,19 +86,35 @@ function WebSocketEndpoint(server, pattern) {
         }
     });
     
-    this.send = function(clientId, data) {
+    this._send = function(clientId, json) {
         // If we're connected, write out the data (in the format specified by 
         // WebSocket Protocol spec.
         var socket = this.clients[clientId];
-        var json = JSON.stringify(data);
         
         if(socket) {
             socket.write('\u0000', 'binary');
-            socket.write(json, 'utf8');
+            socket.write(JSON.stringify(json), 'utf8');
             socket.write('\uffff', 'binary');
         }
     };
     
+    this._sendJunkErrorMessage = function(clientId) {
+        self._send(clientId, {
+            type: 'error',
+            payload: {
+                errorName: 'receiveBadClientJSON',
+                message: 'Received bad json'
+            }
+        });
+    };
+    
+    this.send = function(clientId, json) {
+        this._send(clientId, {
+            type: 'message',
+            payload: json
+        });
+    };
+        
     this.close = function() {
         var clients = this.clients;
         
@@ -129,14 +157,8 @@ function WebSocketEndpoint(server, pattern) {
                 // remove the start character
                 chunk = chunk.substr(1);
                 
-                // parse the json and publish the event.
-                try {
-                    var json = JSON.parse(chunk);
-                } catch(e) {
-                    self.emit('receiveBadInput', clientId, chunk);
-                }
-                
-                if(json) self.emit('receive', clientId, json);
+                // publish
+                self._publishReceive(clientId, chunk);
             }
         };
     };
@@ -187,6 +209,7 @@ function LongPollingEndpoint(server, pattern) {
             
             if(clientId == undefined) {
                 clientId = self.addClient({
+                    socket: response,
                     queue: []
                 });
                 
@@ -217,8 +240,8 @@ function LongPollingEndpoint(server, pattern) {
                 });
                 
                 request.addListener('end', function(chunk) {
-                    var json = JSON.parse(data.join(''));
-                    self.emit('receive', clientId, json);
+                    // publish
+                    self._publishReceive(clientId, data.join(''));
                 });
                 
                 response.writeHead(200);
@@ -257,6 +280,8 @@ function LongPollingEndpoint(server, pattern) {
     this.send = function(clientId, data) {
         var session = this.clients[clientId];
         if(!session) return;
+        
+        sys.puts(JSON.stringify(session));
         
         if(session.socket) {
             this._send(clientId, {
@@ -314,8 +339,8 @@ function CometServer(server, pattern) {
             self.emit('receive', clientEndpoints[clientId], clientId, json);
         });
         
-        endpoint.addListener('receiveBadInput', function(clientId, json) {
-            self.emit('receiveBadInput', clientEndpoints[clientId], clientId, json);
+        endpoint.addListener('receiveJunk', function(clientId, json) {
+            self.emit('receiveJunk', clientEndpoints[clientId], clientId, json);
         });
     }
     

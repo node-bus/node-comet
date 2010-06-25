@@ -32,12 +32,33 @@
             var self = this;
             
             this._socket.onmessage = function(message) {
-                if(self.onmessage) self.onmessage(JSON.parse(message.data));
+                var json = null;
+                
+                try {
+                    json = JSON.parse(message.data);
+                } catch(e) {
+                    if(self.onerror) {
+                        self.onerror('receiveJunk', 'Received non-JSON message from the server');
+                    }
+                }
+                
+                if(json) {
+                    if(json.type == 'message') {
+                        self.onmessage(json.payload);
+                    } else if(json.type == 'error' && json.payload) {
+                        self.onerror(json.payload.errorName, json.payload.message);
+                    } else {
+                        self.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+                    }
+                }
             };
             
             this._socket.onerror = function(error) {
                 // handle the error, then try to reconnect.
-                if(self.onerror) self.onerror(error);
+                if(self.onerror) {
+                    self.onerror('connect', 'Could not connect');
+                }
+                
                 self.errors++;
                 setTimeout(self.init, 1000 * self.errors * self.errors);
             };
@@ -99,6 +120,8 @@
                         if(socket.status >= 200 && socket.status <= 299) {
                             // Unlike for websockets, the longpolling responses
                             // come back as an array. Parse it here.
+                            console.log('received' + socket.responseText);
+                            
                             var json = JSON.parse(socket.responseText);
                             var payload = json.payload;
                             

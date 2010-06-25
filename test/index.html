@@ -43,7 +43,7 @@
                     }
                 });
                 
-                module("Communication");
+                module("Simple communication");
                 
                 sendTest({
                     testName: 'Message bounce',
@@ -64,10 +64,13 @@
                     onmessage: function(message) {
                         ok(false, 'An error should have been thrown');
                     },
-                    onerror: function(error) {
-                        ok(true, 'Received error: ' + error);
+                    onerror: function(type, message) {
+                        equals(type, 'receiveBadClientJSON', 'Received error');
+                        ok(message != undefined && message != null, 'Error message exists');
                     }
                 });
+                
+                module("Message queuing");
                 
                 var queueingMessages = [];
                 for(var i=0; i<100; i++) {
@@ -75,7 +78,7 @@
                 }
                 
                 sendTest({
-                    testName: 'Message queueing',
+                    testName: 'Get 100 messages within 10 seconds',
                     messages: queueingMessages,
                     timeout: 10000,
                     startOnError: true,
