@@ -3,10 +3,17 @@ var events = require("events"),
     URL = require('url'),
     QueryString = require('querystring');
     
+//The ID of the last client that connected (used as a counter)
 var lastClientId = 0;
+
+//A mapping oc client IDs to the implementing endpoints
 var clientEndpoints = {};
 
+//Maximum time in-between connections for long polling before the client is
+//considered disconnected
 var MESSAGE_TIMEOUT = 10 * 1000;
+
+//Message sent to the client when it sends bad JSON data
 var BAD_CLIENT_JSON_MESSAGE = {
     type: 'error',
     payload: {
@@ -15,19 +22,26 @@ var BAD_CLIENT_JSON_MESSAGE = {
     }
 };
 
+//Abstract class for representing comet endpoints. All subclasses must
+//implement send() and close(). Server is the HTTP server instance that the
+//comet endpoint should hook on to. pattern is the URL regex pattern to listen
+//to for requests.
 function CometEndpoint(server, pattern) {
     events.EventEmitter.call(this);
     
     this.clients = {};
     
-    this.send = function(clientId, data) {
+    //Sends json to the specified client
+    this.send = function(clientId, json) {
         throw new Error("CometEndpoint.send() not implemented.");
     };
     
+    //Closes all client connections
     this.close = function() {
         throw new Error("CometEndpoint.close() not implemented.");
     };
     
+    //Adds a client to the endpoint
     this.addClient = function(session) {
         var id = lastClientId++;
         this.clients[id] = session;
@@ -36,20 +50,24 @@ function CometEndpoint(server, pattern) {
         return id;
     };
     
+    //Removes a client from the endpoint
     this.removeClient = function(id) {
         delete this.clients[id];
         delete clientEndpoints[id];
     };
     
+    //Try to parse incoming JSON data and send out the appropriate event.
+    //Returns whether the incoming JSON data was valid.
     this._publishReceive = function(clientId, content) {
-        // parse the json and publish the event.
         try {
             var json = JSON.parse(content);
         } catch(e) {
+            //If we could not parse the json, throw a junk event
             this.emit('receiveJunk', clientId, content);
             return false;
         }
         
+        //Throw out an event with the json if it was parsed
         this.emit('receive', clientId, json);
         return true;
     };
@@ -57,6 +75,7 @@ function CometEndpoint(server, pattern) {
 
 sys.inherits(CometEndpoint, events.EventEmitter);
 
+//Implementation for WebSocket-based communication
 function WebSocketEndpoint(server, pattern) {
     CometEndpoint.call(this);
     var self = this;
@@ -84,6 +103,7 @@ function WebSocketEndpoint(server, pattern) {
                 '', ''
             ].join('\r\n'));
             
+            //send out a connect event
             var clientId = self.addClient(socket);
             self.emit('connect', clientId);
             
@@ -95,6 +115,7 @@ function WebSocketEndpoint(server, pattern) {
         }
     });
     
+    //The private send method. Sends raw json content.
     this._send = function(clientId, json) {
         // If we're connected, write out the data (in the format specified by 
         // WebSocket Protocol spec.
@@ -123,20 +144,13 @@ function WebSocketEndpoint(server, pattern) {
         }
     };
     
+    //Returns a new function that can act as a callback for data events from
+    //sockets.
     this._handleData = function(clientId, socket) {
-        // summary:
-        //          Callback for the 'data' event of the socket.
-        // description:
-        //          Handles the data coming from the client, and publishes an 
-        //          event to the ClientList.
-        // data: String
-        //          Data from the client.
-        // throws:
-        //          Error if data string isn't a valid JSON string.
-        
-        // split the data by the separator character.
         var self = this;
         
+        //Handles data coming from the client, and publishes the appropriate
+        //event
         return function(data) {
             var chunks = data.split('\ufffd');
             
@@ -148,7 +162,8 @@ function WebSocketEndpoint(server, pattern) {
             for (var i = 0; i < chunkCount; i++) {
                 chunk = chunks[i];
                 
-                // if it doesnt start with the start character, then throw an error.
+                //if it doesnt start with the start character, then throw an
+                //error.
                 if (chunk[0] != '\u0000') {
                     continue;
                 }
@@ -164,11 +179,9 @@ function WebSocketEndpoint(server, pattern) {
         };
     };
     
+    //Returns a new function that can act as a callback for events that
+    //should disconnect the user
     this._handleDisconnect = function(clientId, socket) {
-        // summary: 
-        //          Callback for the 'end' event of the socket.
-        // description:
-        //          Flags the client as disconnected, and calls close()
         var self = this;
         
         return function() {
@@ -181,49 +194,50 @@ function WebSocketEndpoint(server, pattern) {
 
 sys.inherits(WebSocketEndpoint, CometEndpoint);
 
+//A long-polling implementation of a comet endpoint. The important thing to
+//note with this is that clients could miss events that are published while
+//they are re-establishing their HTTP long-poll request. What we'll do to
+//mitigate this is maintain a queue of events that occurred between requests
+//in the client's session.
 function LongPollingEndpoint(server, pattern) {
-    // summary:
-    //          Creates a client for node-bus where the client is 'connected' 
-    //          via a long-polling Ajax mechanism.
-    // description:
-    //          LongPollingClient client objects do not directly represent a 
-    //          Client as the WebSocketClient class tends to. Instead, it 
-    //          represents an individual, long-polling, request from a client.  
-    //          The important thing to note with this is that clients could miss 
-    //          events that are published while they are re-establishing their 
-    //          HTTP long-poll request.  What we'll do to mitigate this is allow 
-    //          clients to specify a parameter in the query string for the 
-    //          request called 'lastEventId' which they'll set equal to the 'id' 
-    //          attribute of the latest event they've received.  This way, when 
-    //          the next event is published we can look up and send all the 
-    //          previous events between the 'lastEventId' and the newest event - 
-    //          to catch the client up.
-    
     CometEndpoint.call(this);
     var self = this;
     
+    //Listens for request events for the http server
     server.addListener('request', function(request, response) {
+        //Only do anything if the url pattern matches
         if(request.url.match(pattern)) {
             var parsedRequestUrl = URL.parse(request.url);
             var query = QueryString.parse(parsedRequestUrl.query);
             var clientId = query['clientId'];
+            var session = undefined;
             
-            if(clientId == undefined) {
+            //Try to pull up the client's session if it exists
+            if(clientId != undefined) {
+                clientId = parseInt(clientId);
+                session = self.clients[clientId];  
+            }
+            
+            if(session) {
+                //Clear the disconnect timeout if there is a session since
+                //the client is reconnecting
+                clearTimeout(session.timeoutId);
+            } else {
+                //Create a new client session if there isn't one yet
                 clientId = self.addClient({
                     socket: response,
                     queue: []
                 });
                 
+                session = self.clients[clientId];
                 self.emit('connect', clientId);
-            } else {
-                clientId = parseInt(clientId);
-                clearTimeout(self.clients[clientId].timeoutId);
             }
             
             if(request.method == 'GET') {
-                var session = self.clients[clientId];
+                //Endpoint for listening to events
                 session.socket = response;
                 
+                //Flush the queue if anything is in it
                 if(session.queue && session.queue.length > 0) {
                     self._send(clientId, {
                         clientId: clientId,
@@ -233,6 +247,7 @@ function LongPollingEndpoint(server, pattern) {
                     session.queue = [];
                 }
             } else if(request.method == 'POST') {
+                //Endpoint for publishing events
                 var data = [];
                 
                 // listen for data events so we can collect the data.
@@ -240,28 +255,25 @@ function LongPollingEndpoint(server, pattern) {
                     data.push(chunk);
                 });
                 
+                //Done receiving the event content - handle it
                 request.addListener('end', function(chunk) {
-                    // publish
                     if(self._publishReceive(clientId, data.join(''))) {
+                        //Event is legit - return HTTP/200
                         response.writeHead(200);
                     } else {
+                        //Event is not legit - return HTTP/400
                         response.writeHead(400);
                         response.write(JSON.stringify(BAD_CLIENT_JSON_MESSAGE));
                     }
+                    
+                    response.end();
                 });
-                
-                response.end();
             }
         }
     });
     
+    //Private implementation of send. Sends raw json content.
     this._send = function(clientId, json) {
-        // summary:
-        //          Sends an event, and the historical events, to the client by 
-        //          writing to the response stream.
-        // data: Object
-        //          Event object to write to the client's response stream.
-        
         var data = JSON.stringify(json);
         var session = this.clients[clientId];
         var socket = session.socket;
@@ -279,8 +291,9 @@ function LongPollingEndpoint(server, pattern) {
         session.socket = null;
         var self = this;
         
+        //Create a timeout timer. If the timer hits, the user is disconnected.
         session.timeoutId = setTimeout(function() {
-            delete self.clients[clientId];
+            self.removeClient(clientId);
         }, MESSAGE_TIMEOUT);
     },
     
@@ -289,19 +302,18 @@ function LongPollingEndpoint(server, pattern) {
         if(!session) return;
         
         if(session.socket) {
+            //Send out the event if the client is currently connected
             this._send(clientId, {
                 clientId: clientId,
                 payload: [data]
             });
         } else {
+            //Enqueue the event otherwise
             session.queue.push(data);
         }
     },
     
     this.close = function() {
-        // summary:
-        //          Prepares the LongPollingClient to be ready for the Garbage 
-        //          collector.
         var clients = this.clients;
         for(var clientId in clients) {
             clients[clientId].end();
@@ -317,24 +329,17 @@ ENDPOINT_TYPES = {
     polling: LongPollingEndpoint
 }
 
+//Initializes the comet server. Creates an endpoint for each comet
+//implementation. Server is the HTTP server to listen on. Pattern is a URL
+//regex pattern to filter requests.
 function CometServer(server, pattern) {
-    // summary:
-    //          Initialize the comet server.
-    // description:
-    //          Sets up listeners for 'request' and 'upgrade' events on the 
-    //          server object when they match the given pattern.  Will handle 
-    //          WebSocket requests and longpolling requests.
-    // server: http.Server
-    //          Http Server object.
-    // pattern: RegExp
-    //          URL pattern to match.
-    // returns: 
-    //          Nothing.
-    
     for(var implName in ENDPOINT_TYPES) {
         var cls = ENDPOINT_TYPES[implName];
         var endpoint = new cls(server, pattern);
         var self = this;
+        
+        //Proxy all of the implementation events and add the comet
+        //implementation to the arguments
         
         endpoint.addListener('connect', function(clientId) {
             self.emit('connect', clientEndpoints[clientId], clientId);
@@ -349,8 +354,9 @@ function CometServer(server, pattern) {
         });
     }
     
-    this.send = function(clientId, data) {
-        clientEndpoints[clientId].send(clientId, data);
+    //Sends a message to a specified client ID
+    this.send = function(clientId, json) {
+        clientEndpoints[clientId].send(clientId, json);
     };
 }
 
