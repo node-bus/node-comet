@@ -18,6 +18,17 @@
         };
     }
     
+    //Try to parse the JSON and throw an error if it fails
+    var parseJSON = function(data) {
+        try {
+            return JSON.parse(data);
+        } catch(e) {
+            if(this.onerror) {
+                this.onerror('receiveJunk', 'Received non-JSON message from the server');
+            }
+        }
+    }
+    
     //Comet implementation that uses websockets
     function WebSocketClient(url) {
         //Change the URL from http://... to ws://... if necessary
@@ -51,29 +62,35 @@
         
         //Called when a message is received from the websocket
         _handleMessage: function(message) {
-            var json = null;
+            var json = parseJSON.bind(this)(message.data);
+            if(!json) return false;
             
-            //Try to parse the JSON and throw an error if it fails
-            try {
-                json = JSON.parse(message.data);
-            } catch(e) {
-                if(this.onerror) {
-                    this.onerror('receiveJunk', 'Received non-JSON message from the server');
-                }
-            }
-            
-            if(json) {
+            if(json.type && json.payload) {
                 if(json.type == 'message') {
                     //Call the message event listener if it's a message
-                    this.onmessage(json.payload);
-                } else if(json.type == 'error' && json.payload) {
+                    if(this.onmessage) {
+                        this.onmessage(json.payload);
+                    }
+                    
+                    return true;
+                } else if(json.type == 'error') {
                     //Call the error event listener if it's an error
-                    this.onerror(json.payload.errorName, json.payload.message);
-                } else {
-                    //The server-sent JSON does not follow expected standards
-                    this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+                    var errorName = json.payload.errorName;
+                    var errorMessage = json.payload.message;
+                    
+                    if(errorName && errorMessage) {
+                        if(this.onerror) {
+                            this.onerror(json.payload.errorName, json.payload.message);
+                        }
+                        
+                        return false;
+                    }
                 }
             }
+            
+            //The server-sent JSON does not follow expected standards
+            this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+            return false;
         },
         
         //Call the error listener, then try to reconnect
@@ -144,19 +161,7 @@
                 socket.onreadystatechange = function() {
                     if(socket.readyState == 4) {
                         if(socket.status >= 200 && socket.status <= 299) {
-                            //Parse the response
-                            var json = JSON.parse(socket.responseText);
-                            var payload = json.payload;
-                            
-                            // Iterate through the events and fire them all out.
-                            if(self.onmessage) {
-                                for(var i=0, len=payload.length; i<len; i++) {
-                                    self.onmessage(payload[i]);
-                                }
-                            }
-                            
-                            //Grab the client id
-                            self.clientId = json.clientId;
+                            self._handleMessage(socket.responseText);
                             
                             //Reopen the connection immediately.
                             connect();
@@ -185,6 +190,29 @@
             };
             
             connect();
+        },
+        
+        _handleMessage: function(data) {
+            //Parse the response
+            var json = parseJSON.bind(this)(data);
+            if(!json) return false;
+            
+            this.clientId = json.clientId;
+            var payload = json.payload;
+            
+            if(clientId && payload && payload instanceof Array) {
+                var messageHandler = this.onmessage;
+                
+                if(this.onmessage) {
+                    for(var i=0, len=payload.length; i<len; i++) {
+                        messageHandler(payload[i]);
+                    }
+                }
+            }
+            
+            //The server-sent JSON does not follow expected standards
+            this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+            return false;
         },
         
         //Sends a message to the server
