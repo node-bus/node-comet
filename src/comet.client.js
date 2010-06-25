@@ -1,6 +1,18 @@
 ;(function() {
     var PROTOCOL_PATTERN = /^(http|ws|wss|https):\/\//;
     
+    if (!Function.prototype.bind) { // check if native implementation available
+        Function.prototype.bind = function(){ 
+            var fn = this;
+            var args = Array.prototype.slice.call(arguments);
+            var object = args.shift();
+            
+            return function() {
+                return fn.apply(object, args.concat(Array.prototype.slice.call(arguments))); 
+            }; 
+        };
+    }
+    
     function WebSocketClient(url) {
         this.onMessage = null;
         this.onError = null;
@@ -29,8 +41,8 @@
         
         _init: function() {
             this._socket = new WebSocket(this.url);
-            this._socket.onmessage = this._handleMessage;
-            this._socket.onerror = this._handleError;
+            this._socket.onmessage = this._handleMessage.bind(this);
+            this._socket.onerror = this._handleError.bind(this);
         },
         
         _handleMessage: function(message) {
@@ -167,7 +179,6 @@
         
         send: function(data) {
             var xhr = this._createXHR();
-            var self = this;
             
             xhr.onReadyStateChange = function() {
                 if(xhr.readyState == 4 && (xhr.status < 200 || xhr.status > 299)) {
