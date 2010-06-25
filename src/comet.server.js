@@ -5,7 +5,15 @@ var events = require("events"),
     
 var lastClientId = 0;
 var clientEndpoints = {};
+
 var MESSAGE_TIMEOUT = 10 * 1000;
+var BAD_CLIENT_JSON_MESSAGE = {
+    type: 'error',
+    payload: {
+        errorName: 'receiveBadClientJSON',
+        message: 'Received bad json from the client'
+    }
+};
 
 function CometEndpoint(server, pattern) {
     events.EventEmitter.call(this);
@@ -39,10 +47,11 @@ function CometEndpoint(server, pattern) {
             var json = JSON.parse(content);
         } catch(e) {
             this.emit('receiveJunk', clientId, content);
-            this._sendJunkErrorMessage(clientId);
+            return false;
         }
         
-        if(json) this.emit('receive', clientId, json);
+        this.emit('receive', clientId, json);
+        return true;
     };
 }
 
@@ -98,16 +107,6 @@ function WebSocketEndpoint(server, pattern) {
         }
     };
     
-    this._sendJunkErrorMessage = function(clientId) {
-        self._send(clientId, {
-            type: 'error',
-            payload: {
-                errorName: 'receiveBadClientJSON',
-                message: 'Received bad json'
-            }
-        });
-    };
-    
     this.send = function(clientId, json) {
         this._send(clientId, {
             type: 'message',
@@ -158,7 +157,9 @@ function WebSocketEndpoint(server, pattern) {
                 chunk = chunk.substr(1);
                 
                 // publish
-                self._publishReceive(clientId, chunk);
+                if(!self._publishReceive(clientId, chunk)) {
+                    self._send(clientId, BAD_CLIENT_JSON_MESSAGE);
+                }
             }
         };
     };
@@ -216,7 +217,7 @@ function LongPollingEndpoint(server, pattern) {
                 self.emit('connect', clientId);
             } else {
                 clientId = parseInt(clientId);
-                clearTimeout(self.clients[clientId]);
+                clearTimeout(self.clients[clientId].timeoutId);
             }
             
             if(request.method == 'GET') {
@@ -241,10 +242,14 @@ function LongPollingEndpoint(server, pattern) {
                 
                 request.addListener('end', function(chunk) {
                     // publish
-                    self._publishReceive(clientId, data.join(''));
+                    if(self._publishReceive(clientId, data.join(''))) {
+                        response.writeHead(200);
+                    } else {
+                        response.writeHead(400);
+                        response.write(JSON.stringify(BAD_CLIENT_JSON_MESSAGE));
+                    }
                 });
                 
-                response.writeHead(200);
                 response.end();
             }
         }
@@ -272,16 +277,16 @@ function LongPollingEndpoint(server, pattern) {
         socket.end();
         
         session.socket = null;
+        var self = this;
+        
         session.timeoutId = setTimeout(function() {
-            delete this.clients[clientId];
+            delete self.clients[clientId];
         }, MESSAGE_TIMEOUT);
     },
     
     this.send = function(clientId, data) {
         var session = this.clients[clientId];
         if(!session) return;
-        
-        sys.puts(JSON.stringify(session));
         
         if(session.socket) {
             this._send(clientId, {
