@@ -16,7 +16,7 @@
             this.url = url;
         }
         
-        this.init();
+        this._init();
     }
     
     WebSocketClient.prototype = {
@@ -27,41 +27,42 @@
         url: null,
         queue: [],
         
-        init: function() {
+        _init: function() {
             this._socket = new WebSocket(this.url);
-            var self = this;
+            this._socket.onmessage = this._handleMessage;
+            this._socket.onerror = this._handleError;
+        },
+        
+        _handleMessage: function(message) {
+            var json = null;
             
-            this._socket.onmessage = function(message) {
-                var json = null;
-                
-                try {
-                    json = JSON.parse(message.data);
-                } catch(e) {
-                    if(self.onerror) {
-                        self.onerror('receiveJunk', 'Received non-JSON message from the server');
-                    }
+            try {
+                json = JSON.parse(message.data);
+            } catch(e) {
+                if(this.onerror) {
+                    this.onerror('receiveJunk', 'Received non-JSON message from the server');
                 }
-                
-                if(json) {
-                    if(json.type == 'message') {
-                        self.onmessage(json.payload);
-                    } else if(json.type == 'error' && json.payload) {
-                        self.onerror(json.payload.errorName, json.payload.message);
-                    } else {
-                        self.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
-                    }
-                }
-            };
+            }
             
-            this._socket.onerror = function(error) {
-                // handle the error, then try to reconnect.
-                if(self.onerror) {
-                    self.onerror('connect', 'Could not connect');
+            if(json) {
+                if(json.type == 'message') {
+                    this.onmessage(json.payload);
+                } else if(json.type == 'error' && json.payload) {
+                    this.onerror(json.payload.errorName, json.payload.message);
+                } else {
+                    this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
                 }
-                
-                self.errors++;
-                setTimeout(self.init, 1000 * self.errors * self.errors);
-            };
+            }
+        },
+        
+        _handleError: function(error) {
+            // handle the error, then try to reconnect.
+            if(this.onerror) {
+                this.onerror('connect', 'Could not connect');
+            }
+            
+            this.errors++;
+            setTimeout(this._init, 1000 * this.errors * this.errors);
         },
         
         send: function(json) {
@@ -95,7 +96,7 @@
             this.url = url;
         }
         
-        this.init();
+        this._init();
     }
     
     LongPollingClient.prototype = {
@@ -103,7 +104,7 @@
         clientId: null,
         errors: 0,
         
-        init: function() {
+        _init: function() {
             // set up the long-polling mechanisms.
             var self = this;
             
