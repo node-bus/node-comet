@@ -110,7 +110,7 @@
                     var errorName = json.payload.errorName;
                     var errorMessage = json.payload.message;
                     
-                    if(errorName && errorMessage) {
+                    if(errorName) {
                         if(this.onerror) {
                             this.onerror(errorName, errorMessage);
                         }

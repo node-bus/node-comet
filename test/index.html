@@ -17,12 +17,12 @@
                     stop(options.timeout || 1000);
                     
                     client.onmessage = function(message) {
-                        options.onmessage(message);
+                        options.onmessage.apply(this, Array.prototype.slice.call(arguments));
                         if(++receiveCount == expectedCount) start();
                     };
                     
                     client.onerror = function(error) {
-                        options.onerror(error);
+                        options.onerror.apply(this, Array.prototype.slice.call(arguments));
                         if(++receiveCount == expectedCount || options.startOnError) start();
                     }
                     
