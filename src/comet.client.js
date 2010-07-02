@@ -199,29 +199,32 @@
                             connect();
                         } else {
                             //Handle the error, then try to reconnect.
-                            if(self.onerror) self.onerror(socket);
+                            if(self.onerror) self.onerror('connect', 'Could not connect');
                             self.errors++;
                             setTimeout(connect, 1000 * self.errors * self.errors);
                         }
                     }
                 };
             
-                // use the date/time suffix for anti-caching and use the
-                // clientId to 'catch up' with events we missed.
-                var time = (new Date()).getTime();
-                
-                if(self.clientId != null) {
-                    var queryString = "?clientId=" + self.clientId + "&" + time;
-                } else {
-                    var queryString = "?" + time;
-                }
-                
                 // start the connection.
-                socket.open("GET", self.url + queryString, true);
+                socket.open("GET", self._getXHRUrl(), true);
                 socket.send();
             };
             
             connect();
+        },
+        
+        _getXHRUrl: function() {
+            // use the date/time suffix for anti-caching
+            var time = (new Date()).getTime();
+            
+            if(self.clientId != null) {
+                var queryString = "?clientId=" + self.clientId + "&" + time;
+            } else {
+                var queryString = "?" + time;
+            }
+            
+            return this.url + queryString;
         },
         
         _handleMessage: function(data) {
@@ -229,12 +232,14 @@
             var json = parseJSON.bind(this)(data);
             if(!json) return false;
             
-            this.clientId = json.clientId;
+            var clientId = json.clientId;
             var payload = json.payload;
             
-            if(clientId && payload && payload instanceof Array) {
+            if(clientId != undefined) {
+                this.clientId = clientId;
+            } else if(payload != undefined && payload instanceof Array) {
                 var messageHandler = this.onmessage;
-                
+                    
                 if(this.onmessage) {
                     for(var i=0, len=payload.length; i<len; i++) {
                         messageHandler(payload[i]);
@@ -243,25 +248,39 @@
             }
             
             //The server-sent JSON does not follow expected standards
-            this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+            if(this.onerror) {
+                this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+            }
+            
             return false;
         },
         
         //Sends a message to the server
         send: function(data) {
-            var xhr = this._createXHR();
+            var self = this;
             
-            //Handles a response from the xhr object
-            xhr.onReadyStateChange = function() {
-                if(xhr.readyState == 4 && (xhr.status < 200 || xhr.status > 299)) {
-                    if(this.onerror) this.onerror(xhr);
+            //Wait until there is a clientId before we send the message
+            var lazySend = function() {
+                if(self.clientId != null) {
+                    var xhr = self._createXHR();
+            
+                    //Handles a response from the xhr object
+                    xhr.onReadyStateChange = function() {
+                        if(xhr.readyState == 4 && (xhr.status < 200 || xhr.status > 299)) {
+                            if(self.onerror) self.onerror('connect', 'Could not connect');
+                        }
+                    }
+                    
+                    //Send the message
+                    xhr.open("POST", self._getXHRUrl(), true);
+                    xhr.setRequestHeader("Content-type","application/json");
+                    xhr.send(JSON.stringify(data));
+                } else {
+                    setTimeout(lazySend, 1);
                 }
-            }
+            };
             
-            //Send the message
-            xhr.open("POST", this.url, true);
-            xhr.setRequestHeader("Content-type","application/json");
-            xhr.send(JSON.stringify(data));
+            lazySend();
         },
         
         //Close the socket

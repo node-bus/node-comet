@@ -19,6 +19,10 @@ cometServer.addListener('connect', function(endpoint, clientId) {
     sys.puts("Client " + clientId + " connected");
 });
 
+cometServer.addListener('close', function(endpoint, clientId) {
+    sys.puts("Client " + clientId + " disconnected");
+});
+
 cometServer.addListener('receive', function(endpoint, clientId, json) {
     sys.puts("Sending to " + clientId + ": " + JSON.stringify(json));
     cometServer.send(clientId, json);

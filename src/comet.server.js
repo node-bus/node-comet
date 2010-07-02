@@ -14,11 +14,30 @@ var clientEndpoints = {};
 var MESSAGE_TIMEOUT = 10 * 1000;
 
 //Message sent to the client when it sends bad JSON data
-var BAD_CLIENT_JSON_MESSAGE = {
+var BAD_CLIENT_MESSAGE = {
     type: 'error',
     payload: {
         errorName: 'receiveBadClientJSON',
         message: 'Received bad json from the client'
+    }
+};
+
+//Message sent to the client when it gives an unregistered clientId
+var BAD_CLIENT_ID_MESSAGE = {
+    type: 'error',
+    payload: {
+        errorName: 'badClientId',
+        message: 'That client ID is not registered with the server'
+    }
+};
+
+//Message sent to the client when they use an HTTP method not allowed at the
+//time
+var METHOD_NOT_ALLOWED_MESSAGE = {
+    type: 'error',
+    payload: {
+        errorName: 'methodNotAllowed',
+        message: 'You cannot use that HTTP method at this time'
     }
 };
 
@@ -28,7 +47,6 @@ var BAD_CLIENT_JSON_MESSAGE = {
 //to for requests.
 function CometEndpoint(server, pattern) {
     events.EventEmitter.call(this);
-    
     this.clients = {};
     
     //Sends json to the specified client
@@ -47,11 +65,14 @@ function CometEndpoint(server, pattern) {
         this.clients[id] = session;
         clientEndpoints[id] = this;
         
+        this.emit('connect', id);
+        
         return id;
     };
     
     //Removes a client from the endpoint
     this.removeClient = function(id) {
+        this.emit('close', id);
         delete this.clients[id];
         delete clientEndpoints[id];
     };
@@ -83,37 +104,40 @@ function WebSocketEndpoint(server, pattern) {
     // listen for 'upgrade' events, so we can handle websockets.
     server.addListener('upgrade', function(request, socket, head) {
         if(request.headers['upgrade'] === "WebSocket" && request.url.match(pattern)) {
-            // Attempt to make the socket unable to time out.
-            socket.setTimeout(0);
-            socket.setKeepAlive(true);
-            
-            // We're going to be transmiting utf-8 strings.
-            socket.setEncoding('utf8');
-            
-            // Immediately flush data when socket.write is called.
-            socket.setNoDelay(true);
-            
-            // Set up the handshake.
-            socket.write([
-                'HTTP/1.1 101 Web Socket Protocol Handshake', 
-                'Upgrade: WebSocket', 
-                'Connection: Upgrade',
-                'WebSocket-Origin: ' + request.headers.origin,
-                'WebSocket-Location: ws://' + request.headers.host + request.url,
-                '', ''
-            ].join('\r\n'));
-            
-            //send out a connect event
-            var clientId = self.addClient(socket);
-            self.emit('connect', clientId);
-            
-            // listen for socket events.
-            socket.addListener("data", self._handleData(clientId, socket));
-            socket.addListener("end", self._handleDisconnect(clientId, socket));
-            socket.addListener("timeout", self._handleDisconnect(clientId, socket));
-            socket.addListener("error", self._handleDisconnect(clientId, socket));
+            self._handleRequest.call(this, request, socket);
         }
     });
+    
+    this._handleRequest = function(request, socket) {
+        // Attempt to make the socket unable to time out.
+        socket.setTimeout(0);
+        socket.setKeepAlive(true);
+        
+        // We're going to be transmiting utf-8 strings.
+        socket.setEncoding('utf8');
+        
+        // Immediately flush data when socket.write is called.
+        socket.setNoDelay(true);
+        
+        // Set up the handshake.
+        socket.write([
+            'HTTP/1.1 101 Web Socket Protocol Handshake', 
+            'Upgrade: WebSocket', 
+            'Connection: Upgrade',
+            'WebSocket-Origin: ' + request.headers.origin,
+            'WebSocket-Location: ws://' + request.headers.host + request.url,
+            '', ''
+        ].join('\r\n'));
+        
+        //send out a connect event
+        var clientId = self.addClient(socket);
+        
+        // listen for socket events.
+        socket.addListener("data", this._handleData(clientId, socket));
+        socket.addListener("end", this._handleDisconnect(clientId, socket));
+        socket.addListener("timeout", this._handleDisconnect(clientId, socket));
+        socket.addListener("error", this._handleDisconnect(clientId, socket));
+    };
     
     //The private send method. Sends raw json content.
     this._send = function(clientId, json) {
@@ -173,7 +197,7 @@ function WebSocketEndpoint(server, pattern) {
                 
                 // publish
                 if(!self._publishReceive(clientId, chunk)) {
-                    self._send(clientId, BAD_CLIENT_JSON_MESSAGE);
+                    self._send(clientId, BAD_CLIENT_MESSAGE);
                 }
             }
         };
@@ -207,79 +231,98 @@ function LongPollingEndpoint(server, pattern) {
     server.addListener('request', function(request, response) {
         //Only do anything if the url pattern matches
         if(request.url.match(pattern)) {
-            var parsedRequestUrl = URL.parse(request.url);
-            var query = QueryString.parse(parsedRequestUrl.query);
-            var clientId = query['clientId'];
-            var session = undefined;
-            
-            //Try to pull up the client's session if it exists
-            if(clientId != undefined) {
-                clientId = parseInt(clientId);
-                session = self.clients[clientId];  
-            }
-            
-            if(session) {
-                //Clear the disconnect timeout if there is a session since
-                //the client is reconnecting
-                clearTimeout(session.timeoutId);
-            } else {
-                //Create a new client session if there isn't one yet
-                clientId = self.addClient({
-                    socket: response,
-                    queue: []
-                });
-                
-                session = self.clients[clientId];
-                self.emit('connect', clientId);
-            }
-            
-            if(request.method == 'GET') {
-                //Endpoint for listening to events
-                session.socket = response;
-                
-                //Flush the queue if anything is in it
-                if(session.queue && session.queue.length > 0) {
-                    self._send(clientId, {
-                        clientId: clientId,
-                        payload: session.queue
-                    });
-                    
-                    session.queue = [];
-                }
-            } else if(request.method == 'POST') {
-                //Endpoint for publishing events
-                var data = [];
-                
-                // listen for data events so we can collect the data.
-                request.addListener('data', function(chunk) {
-                    data.push(chunk);
-                });
-                
-                //Done receiving the event content - handle it
-                request.addListener('end', function(chunk) {
-                    if(self._publishReceive(clientId, data.join(''))) {
-                        //Event is legit - return HTTP/200
-                        response.writeHead(200);
-                    } else {
-                        //Event is not legit - return HTTP/400
-                        response.writeHead(400);
-                        response.write(JSON.stringify(BAD_CLIENT_JSON_MESSAGE));
-                    }
-                    
-                    response.end();
-                });
-            }
+            self._handleRequest.call(this, request, response);
         }
     });
     
-    //Private implementation of send. Sends raw json content.
-    this._send = function(clientId, json) {
-        var data = JSON.stringify(json);
+    this._handleRequest = function(request, response) {
+        var parsedRequestUrl = URL.parse(request.url);
+        var query = QueryString.parse(parsedRequestUrl.query);
+        var clientId = null;
+        
+        //Try to pull up the client's session if it exists
+        try {
+            clientId = parseInt(query['clientId']);
+            if(isNaN(clientId)) clientId = null;
+        } catch(e) {}
+        
+        if(!clientId) {
+            //Create a new client session if there isn't one yet
+            clientId = self.addClient({
+                queue: [],
+                socket: response
+            });
+            
+            if(request.method == 'GET') {
+                //Send a stub message with just the client id if it's a new
+                //connection
+                this._sendThruSession(clientId, 200, {
+                    clientId: clientId
+                });
+            } else {
+                //Only GETs are allowed without a client id
+                this._sendThruSession(clientId, 400, BAD_CLIENT_ID_MESSAGE);
+            }
+        }
+        
+        if(request.method == 'GET') {
+            this._handleGet(clientId, request, response);
+        } else if(request.method == 'POST') {
+            this._handlePost(clientId, request, response);
+        } else {
+            this._sendThruSession(clientId, 400, METHOD_NOT_ALLOWED_MESSAGE);
+        }
+    };
+    
+    this._handleGet = function(clientId, request, response) {
         var session = this.clients[clientId];
-        var socket = session.socket;
+        
+        //Clear the disconnect timeout if there is a session since the
+        //client is reconnecting
+        clearTimeout(session.timeoutId);
+        session.socket = response;
+        
+        //Flush the queue if anything is in it
+        if(session.queue && session.queue.length > 0) {
+            this._sendThruSession(clientId, 200, {
+                payload: session.queue
+            });
+            
+            session.queue = [];
+        }
+    };
+    
+    this._handlePost = function(clientId, request, response) {
+        //Endpoint for publishing events
+        var data = [];
+        
+        // listen for data events so we can collect the data.
+        request.addListener('data', function(chunk) {
+            data.push(chunk);
+        });
+        
+        //Done receiving the event content - handle it
+        request.addListener('end', function(chunk) {
+            if(this._publishReceive(clientId, data.join(''))) {
+                //Event is legit - return HTTP/200
+                this._send(response, 200, {});
+                
+            } else {
+                //Event is not legit - return HTTP/400
+                var json = JSON.stringify(BAD_CLIENT_MESSAGE);
+                this._send(response, 400, json);
+            }
+            
+            response.end();
+        });
+    };
+    
+    //Private implementation of send. Sends raw json content.
+    this._send = function(socket, httpCode, json) {
+        var data = JSON.stringify(json);
         
         // set the response headers correctly
-        socket.writeHead(200, {
+        socket.writeHead(httpCode, {
             'Content-Length': data.length,
             'Content-Type': 'application/json'
         });
@@ -287,6 +330,13 @@ function LongPollingEndpoint(server, pattern) {
         // write it out
         socket.write(data);
         socket.end();
+    };
+    
+    this._sendThruSession = function(clientId, httpCode, json) {
+        var session = this.clients[clientId];
+        var socket = session.socket;
+        
+        this._send(socket, httpCode, json);
         
         session.socket = null;
         var self = this;
@@ -295,7 +345,7 @@ function LongPollingEndpoint(server, pattern) {
         session.timeoutId = setTimeout(function() {
             self.removeClient(clientId);
         }, MESSAGE_TIMEOUT);
-    },
+    };
     
     this.send = function(clientId, data) {
         var session = this.clients[clientId];
@@ -303,20 +353,21 @@ function LongPollingEndpoint(server, pattern) {
         
         if(session.socket) {
             //Send out the event if the client is currently connected
-            this._send(clientId, {
-                clientId: clientId,
+            this._sendThruSession(clientId, 200, {
                 payload: [data]
             });
         } else {
             //Enqueue the event otherwise
             session.queue.push(data);
         }
-    },
+    };
     
     this.close = function() {
         var clients = this.clients;
+        
         for(var clientId in clients) {
-            clients[clientId].end();
+            var session = clients[clientId]
+            if(session.socket) session.socket.end();
             this.removeClient(clientId);
         }
     };
@@ -345,6 +396,10 @@ function CometServer(server, pattern) {
             self.emit('connect', clientEndpoints[clientId], clientId);
         });
         
+        endpoint.addListener('close', function(clientId) {
+            self.emit('close', clientEndpoints[clientId], clientId);
+        });
+        
         endpoint.addListener('receive', function(clientId, json) {
             self.emit('receive', clientEndpoints[clientId], clientId, json);
         });
@@ -356,6 +411,7 @@ function CometServer(server, pattern) {
     
     //Sends a message to a specified client ID
     this.send = function(clientId, json) {
+        //TODO: throw an error when the client doesn't exist
         clientEndpoints[clientId].send(clientId, json);
     };
 }
