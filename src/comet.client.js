@@ -218,8 +218,8 @@
             // use the date/time suffix for anti-caching
             var time = (new Date()).getTime();
             
-            if(self.clientId != null) {
-                var queryString = "?clientId=" + self.clientId + "&" + time;
+            if(this.clientId != null) {
+                var queryString = "?clientId=" + this.clientId + "&" + time;
             } else {
                 var queryString = "?" + time;
             }

@@ -104,7 +104,7 @@ function WebSocketEndpoint(server, pattern) {
     // listen for 'upgrade' events, so we can handle websockets.
     server.addListener('upgrade', function(request, socket, head) {
         if(request.headers['upgrade'] === "WebSocket" && request.url.match(pattern)) {
-            self._handleRequest.call(this, request, socket);
+            self._handleRequest(request, socket);
         }
     });
     
@@ -133,17 +133,17 @@ function WebSocketEndpoint(server, pattern) {
         var clientId = self.addClient(socket);
         
         // listen for socket events.
-        socket.addListener("data", this._handleData(clientId, socket));
-        socket.addListener("end", this._handleDisconnect(clientId, socket));
-        socket.addListener("timeout", this._handleDisconnect(clientId, socket));
-        socket.addListener("error", this._handleDisconnect(clientId, socket));
+        socket.addListener("data", self._handleData(clientId, socket));
+        socket.addListener("end", self._handleDisconnect(clientId, socket));
+        socket.addListener("timeout", self._handleDisconnect(clientId, socket));
+        socket.addListener("error", self._handleDisconnect(clientId, socket));
     };
     
     //The private send method. Sends raw json content.
     this._send = function(clientId, json) {
         // If we're connected, write out the data (in the format specified by 
         // WebSocket Protocol spec.
-        var socket = this.clients[clientId];
+        var socket = self.clients[clientId];
         
         if(socket) {
             socket.write('\u0000', 'binary');
@@ -153,26 +153,24 @@ function WebSocketEndpoint(server, pattern) {
     };
     
     this.send = function(clientId, json) {
-        this._send(clientId, {
+        self._send(clientId, {
             type: 'message',
             payload: json
         });
     };
         
     this.close = function() {
-        var clients = this.clients;
+        var clients = self.clients;
         
         for(var clientId in clients) {
             clients[clientId].end();
-            this.removeClient(clientId);
+            self.removeClient(clientId);
         }
     };
     
     //Returns a new function that can act as a callback for data events from
     //sockets.
     this._handleData = function(clientId, socket) {
-        var self = this;
-        
         //Handles data coming from the client, and publishes the appropriate
         //event
         return function(data) {
@@ -206,8 +204,6 @@ function WebSocketEndpoint(server, pattern) {
     //Returns a new function that can act as a callback for events that
     //should disconnect the user
     this._handleDisconnect = function(clientId, socket) {
-        var self = this;
-        
         return function() {
             // close out the socket
             socket.end();
@@ -231,7 +227,7 @@ function LongPollingEndpoint(server, pattern) {
     server.addListener('request', function(request, response) {
         //Only do anything if the url pattern matches
         if(request.url.match(pattern)) {
-            self._handleRequest.call(this, request, response);
+            self._handleRequest(request, response);
         }
     });
     
@@ -246,7 +242,7 @@ function LongPollingEndpoint(server, pattern) {
             if(isNaN(clientId)) clientId = null;
         } catch(e) {}
         
-        if(!clientId) {
+        if(!clientId && clientId != 0) {
             //Create a new client session if there isn't one yet
             clientId = self.addClient({
                 queue: [],
@@ -256,26 +252,26 @@ function LongPollingEndpoint(server, pattern) {
             if(request.method == 'GET') {
                 //Send a stub message with just the client id if it's a new
                 //connection
-                this._sendThruSession(clientId, 200, {
+                self._sendThruSession(clientId, 200, {
                     clientId: clientId
                 });
             } else {
                 //Only GETs are allowed without a client id
-                this._sendThruSession(clientId, 400, BAD_CLIENT_ID_MESSAGE);
+                self._sendThruSession(clientId, 400, BAD_CLIENT_ID_MESSAGE);
             }
         }
         
         if(request.method == 'GET') {
-            this._handleGet(clientId, request, response);
+            self._handleGet(clientId, request, response);
         } else if(request.method == 'POST') {
-            this._handlePost(clientId, request, response);
+            self._handlePost(clientId, request, response);
         } else {
-            this._sendThruSession(clientId, 400, METHOD_NOT_ALLOWED_MESSAGE);
+            self._sendThruSession(clientId, 400, METHOD_NOT_ALLOWED_MESSAGE);
         }
     };
     
     this._handleGet = function(clientId, request, response) {
-        var session = this.clients[clientId];
+        var session = self.clients[clientId];
         
         //Clear the disconnect timeout if there is a session since the
         //client is reconnecting
@@ -284,7 +280,7 @@ function LongPollingEndpoint(server, pattern) {
         
         //Flush the queue if anything is in it
         if(session.queue && session.queue.length > 0) {
-            this._sendThruSession(clientId, 200, {
+            self._sendThruSession(clientId, 200, {
                 payload: session.queue
             });
             
@@ -303,14 +299,14 @@ function LongPollingEndpoint(server, pattern) {
         
         //Done receiving the event content - handle it
         request.addListener('end', function(chunk) {
-            if(this._publishReceive(clientId, data.join(''))) {
+            if(self._publishReceive(clientId, data.join(''))) {
                 //Event is legit - return HTTP/200
-                this._send(response, 200, {});
+                self._send(response, 200, {});
                 
             } else {
                 //Event is not legit - return HTTP/400
                 var json = JSON.stringify(BAD_CLIENT_MESSAGE);
-                this._send(response, 400, json);
+                self._send(response, 400, json);
             }
             
             response.end();
@@ -333,13 +329,11 @@ function LongPollingEndpoint(server, pattern) {
     };
     
     this._sendThruSession = function(clientId, httpCode, json) {
-        var session = this.clients[clientId];
+        var session = self.clients[clientId];
         var socket = session.socket;
         
-        this._send(socket, httpCode, json);
-        
+        self._send(socket, httpCode, json);
         session.socket = null;
-        var self = this;
         
         //Create a timeout timer. If the timer hits, the user is disconnected.
         session.timeoutId = setTimeout(function() {
@@ -348,12 +342,12 @@ function LongPollingEndpoint(server, pattern) {
     };
     
     this.send = function(clientId, data) {
-        var session = this.clients[clientId];
+        var session = self.clients[clientId];
         if(!session) return;
         
         if(session.socket) {
             //Send out the event if the client is currently connected
-            this._sendThruSession(clientId, 200, {
+            self._sendThruSession(clientId, 200, {
                 payload: [data]
             });
         } else {
@@ -363,12 +357,12 @@ function LongPollingEndpoint(server, pattern) {
     };
     
     this.close = function() {
-        var clients = this.clients;
+        var clients = self.clients;
         
         for(var clientId in clients) {
             var session = clients[clientId]
             if(session.socket) session.socket.end();
-            this.removeClient(clientId);
+            self.removeClient(clientId);
         }
     };
 }
