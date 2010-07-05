@@ -77,7 +77,7 @@
                     queueingMessages.push(MESSAGE_BOUNCE_JSON);
                 }
                 
-                /*sendTest({
+                sendTest({
                     testName: 'Get 100 messages within 10 seconds',
                     messages: queueingMessages,
                     timeout: 10000,
@@ -89,7 +89,7 @@
                     onerror: function(error) {
                         ok(false, 'Received error: ' + error);
                     }
-                });*/
+                });
             }
         </script>
     </head>

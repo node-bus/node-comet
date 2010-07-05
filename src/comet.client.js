@@ -59,7 +59,7 @@
             
             return null;
         }
-    }
+    };
     
     //Comet implementation that uses websockets
     function WebSocketClient(url) {
@@ -245,10 +245,7 @@
                         messageHandler(payload[i]);
                     }
                 }
-            }
-            
-            //The server-sent JSON does not follow expected standards
-            if(this.onerror) {
+            } else if(this.onerror) {
                 this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
             }
             
@@ -265,9 +262,24 @@
                     var xhr = self._createXHR();
             
                     //Handles a response from the xhr object
-                    xhr.onReadyStateChange = function() {
+                    xhr.onreadystatechange = function() {
                         if(xhr.readyState == 4 && (xhr.status < 200 || xhr.status > 299)) {
-                            if(self.onerror) self.onerror('connect', 'Could not connect');
+                            var json = parseJSON.bind(this)(xhr.responseText);
+                            if(!json) return;
+                            
+                            var errorName = null;
+                            var errorMessage = null;
+                            
+                            try {
+                                errorName = json.payload.errorName;
+                                errorMessage = json.payload.message;
+                            } catch(e) {}
+                            
+                            if(errorName && errorMessage) {
+                                if(self.onerror) self.onerror(errorName, errorMessage);
+                            } else {
+                                if(self.onerror) self.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+                            }
                         }
                     }
                     

@@ -272,6 +272,7 @@ function LongPollingEndpoint(server, pattern) {
     
     this._handleGet = function(clientId, request, response) {
         var session = self.clients[clientId];
+        if(!session) return;
         
         //Clear the disconnect timeout if there is a session since the
         //client is reconnecting
@@ -305,8 +306,7 @@ function LongPollingEndpoint(server, pattern) {
                 
             } else {
                 //Event is not legit - return HTTP/400
-                var json = JSON.stringify(BAD_CLIENT_MESSAGE);
-                self._send(response, 400, json);
+                self._send(response, 400, BAD_CLIENT_MESSAGE);
             }
             
             response.end();
