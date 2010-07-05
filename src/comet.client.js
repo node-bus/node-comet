@@ -214,6 +214,7 @@
             connect();
         },
         
+        //Creates the URL to the long polling comet endpoint
         _getXHRUrl: function() {
             // use the date/time suffix for anti-caching
             var time = (new Date()).getTime();
@@ -227,6 +228,7 @@
             return this.url + queryString;
         },
         
+        //Called when a message is received from the server
         _handleMessage: function(data) {
             //Parse the response
             var json = parseJSON.bind(this)(data);
@@ -236,11 +238,14 @@
             var payload = json.payload;
             
             if(clientId != undefined) {
+                //This is a message that is simply returning the client id for
+                //use in future connections
                 this.clientId = clientId;
             } else if(payload != undefined && payload instanceof Array) {
+                //The server has sent a payload
                 var messageHandler = this.onmessage;
                     
-                if(this.onmessage) {
+                if(messageHandler) {
                     for(var i=0, len=payload.length; i<len; i++) {
                         messageHandler(payload[i]);
                     }
@@ -270,11 +275,15 @@
                             var errorName = null;
                             var errorMessage = null;
                             
+                            //Try to get the error name and message
                             try {
                                 errorName = json.payload.errorName;
                                 errorMessage = json.payload.message;
                             } catch(e) {}
                             
+                            //Throw an error when the name and message if the
+                            //payload was successfully parsed - otherwise throw
+                            //a badServerJSON
                             if(errorName && errorMessage) {
                                 if(self.onerror) self.onerror(errorName, errorMessage);
                             } else {
