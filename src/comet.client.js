@@ -121,7 +121,7 @@
             }
             
             //The server-sent JSON does not follow expected standards
-            this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+            this.onerror('badServerJSON', 'Received bad JSON message from the server');
             return false;
         },
         
@@ -246,7 +246,7 @@
                     }
                 }
             } else if(this.onerror) {
-                this.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+                this.onerror('badServerJSON', 'Received bad JSON message from the server');
             }
             
             return false;
@@ -278,7 +278,7 @@
                             if(errorName && errorMessage) {
                                 if(self.onerror) self.onerror(errorName, errorMessage);
                             } else {
-                                if(self.onerror) self.onerror('receiveBadServerJSON', 'Received bad JSON message from the server');
+                                if(self.onerror) self.onerror('badServerJSON', 'Received bad JSON message from the server');
                             }
                         }
                     }

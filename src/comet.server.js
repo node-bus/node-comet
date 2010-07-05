@@ -17,7 +17,7 @@ var MESSAGE_TIMEOUT = 10 * 1000;
 var BAD_CLIENT_MESSAGE = {
     type: 'error',
     payload: {
-        errorName: 'receiveBadClientJSON',
+        errorName: 'badClientJSON',
         message: 'Received bad json from the client'
     }
 };

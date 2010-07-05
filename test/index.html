@@ -65,7 +65,7 @@
                         ok(false, 'An error should have been thrown');
                     },
                     onerror: function(type, message) {
-                        equals(type, 'receiveBadClientJSON', 'Received error');
+                        equals(type, 'badClientJSON', 'Received error');
                         ok(message != undefined && message != null, 'Error message exists');
                     }
                 });
